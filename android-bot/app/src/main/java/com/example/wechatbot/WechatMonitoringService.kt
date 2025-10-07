@@ -28,9 +28,12 @@ import com.example.wechatbot.profile.AutomationProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collect
+
 import kotlinx.coroutines.launch
 
 class WechatMonitoringService : LifecycleService() {
@@ -177,7 +180,7 @@ class WechatMonitoringService : LifecycleService() {
     }
 
     private suspend fun captureLoop() {
-        while (isActive) {
+        while (scope.isActive) {
             val reader = imageReader ?: break
             val image = reader.acquireLatestImage()
             if (image != null) {

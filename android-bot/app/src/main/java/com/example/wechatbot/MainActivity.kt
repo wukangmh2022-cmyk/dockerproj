@@ -9,6 +9,8 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.example.wechatbot.automation.WechatAutomationService
+
 import com.example.wechatbot.databinding.ActivityMainBinding
 import com.example.wechatbot.profile.ProfileLoader
 import kotlinx.coroutines.Dispatchers
