@@ -7,9 +7,9 @@ import android.content.Intent
 import android.graphics.Path
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.content.ContextCompat
 import com.example.wechatbot.WechatMonitoringService
+import kotlin.random.Random
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,10 +46,35 @@ class WechatAutomationService : AccessibilityService() {
         }
     }
 
-    fun performTap(x: Float, y: Float) {
-        val path = Path().apply { moveTo(x, y) }
+    private fun randomize(value: Float, jitter: Float): Float {
+        if (jitter <= 0f) return value
+        val delta = Random.nextFloat() * jitter - jitter / 2f
+        return value + delta
+    }
+
+    fun performTap(x: Float, y: Float, jitter: Float = 8f) {
+        val adjustedX = randomize(x, jitter)
+        val adjustedY = randomize(y, jitter)
+        val path = Path().apply { moveTo(adjustedX, adjustedY) }
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, 50))
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 80))
+            .build()
+        dispatchGesture(gesture, null, null)
+    }
+
+    fun performLongPress(x: Float, y: Float, duration: Long = 600L, jitter: Float = 8f) {
+        val adjustedX = randomize(x, jitter)
+        val adjustedY = randomize(y, jitter)
+        val path = Path().apply { moveTo(adjustedX, adjustedY) }
+        val pressDuration = duration.coerceAtLeast(300L)
+        val gesture = GestureDescription.Builder()
+            .addStroke(
+                GestureDescription.StrokeDescription(
+                    path,
+                    0,
+                    pressDuration
+                )
+            )
             .build()
         dispatchGesture(gesture, null, null)
     }
@@ -71,8 +96,16 @@ class WechatAutomationService : AccessibilityService() {
             WechatMonitoringService.enqueueScreenCapturePermission(context, resultCode, data)
         }
 
-        fun tap(x: Float, y: Float) {
-            instance?.performTap(x, y)
+        fun tap(x: Float, y: Float, jitter: Float = 8f) {
+            instance?.performTap(x, y, jitter)
+        }
+
+        fun longPress(x: Float, y: Float, duration: Long = 600L, jitter: Float = 8f) {
+            instance?.performLongPress(x, y, duration, jitter)
+        }
+
+        fun globalBack() {
+            instance?.performGlobalAction(GLOBAL_ACTION_BACK)
         }
     }
 }

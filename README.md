@@ -1,15 +1,18 @@
 # WeChat Service Notification Forwarder (Android)
 
-本项目提供一个运行在安卓手机本地的微信服务号通知转发器。应用通过 **辅助功能服务 + 屏幕录制授权** 获取界面信息，在本地执行 HSV 找色与模板比对后，触发模拟点击，从而把符合正则 / 颜色规则的服务号通知转发给指定联系人。整个流程无需 ADB、无需外部服务器，只要在手机上安装并授权即可 24/7 运行。
+本项目提供一个 **纯手机端、无需 ADB/服务器** 的微信小号自动转发机器人。应用通过辅助功能与 `MediaProjection` 截屏，在本地运行 OCR 识别并执行多场景点击脚本，将服务号通知复制后转发给指定联系人，支持 24×7 稳定运行。
 
-> ⚠️ 注意：示例代码仅用于学习/验证流程，请确保使用前阅读并遵守微信及所在地法律法规的相关条款。
+> ⚠️ 示例工程仅用于学习与流程验证，请确保遵守微信协议及当地法律法规。
 
-## 功能概览
+## 功能亮点
 
-- **手机本地找色**：利用 `MediaProjection` 定期抓取屏幕帧，通过 `ColorAnalyzer` 对指定区域做 HSV 匹配，并可加载 `drawable` 下的模板占位资源（本仓库内含 `placeholder_*` 示例）。
-- **辅助功能点击**：`WechatAutomationService` 继承 `AccessibilityService`，在识别到目标颜色后可延迟执行手势点击，实现“打开通知-选择联系人-确认转发”等自动化流程。
-- **配置化策略**：`res/raw/default_profile.json` 中定义了转发联系人、允许的通知来源、找色区域、HSV 阈值以及对应的点击坐标，可自行复制修改；应用启动后点击 “Load automation profile” 即可加载。
-- **可视化状态**：前台服务常驻通知栏，并在屏幕角落浮动提示当前状态（例如“Profile loaded” 或 “Detected confirm_button …”），方便观察运行情况。
+- **关键词优先识别，模板可选补充**：默认脚本仅依赖 Google ML Kit OCR，根据命中关键词达到 ≥75% 的比例来判断场景；如需模板匹配，可在独立的模板调试脚本或自定义脚本中引用 PNG/JPG 资源，无需维护 HSV 区间。
+- **多场景脚本（10+ 步点击逻辑）**：默认配置覆盖主聊天列表、服务号会话、联系人会话三大界面，完整包含“进入服务号 → 复制通知 → 返回 → 进入联系人 → 粘贴 → 发送 → 返回”等 12 个动作，满足真实转发流程需求。
+- **随机偏移防检测**：所有点击与长按均自带轻微随机偏移及可配置时序，模拟人工操作，降低被判定为脚本的风险。
+- **可选模板图库**：应用会在 `Android/data/<package>/files/ocr_gallery/` 下维护“相册”，支持从系统相册导入 PNG/JPG/WebP 并在 JSON 中直接引用，便于针对特定按钮或图标单独调试。
+- **配置化工作流**：`res/raw/default_profile.json` 使用“识别配置 + 动作列表”的轻量结构，默认全屏检测，坐标与节奏均可配置；应用内即可切换、导入与编辑脚本。
+- **调试脚本内置**：`res/raw/debug_profile.json` 用于关键词探测验证；`res/raw/image_probe_profile.json` 用于图片模板命中调试，两者命中时都会弹出带归一化坐标的悬浮提示（无动作）。
+- **运行状态可视化**：前台服务持续显示通知，屏幕上方悬浮窗实时提示当前执行的场景、状态与错误，便于监控。
 
 ## 工程结构
 
@@ -17,72 +20,120 @@
 android-bot/
 ├── app/
 │   ├── src/main/java/com/example/wechatbot/
-│   │   ├── MainActivity.kt              # UI 入口，请求权限 & 触发配置加载
-│   │   ├── SettingsActivity.kt          # 辅助功能设置入口
-│   │   ├── WechatMonitoringService.kt   # 前台服务，负责截图、找色、调度动作
-│   │   ├── automation/WechatAutomationService.kt  # 辅助功能服务，执行点击
-│   │   ├── color/ColorAnalyzer.kt       # HSV 匹配与模板缓存
-│   │   └── profile/*                    # 配置数据类与加载器
-│   ├── src/main/res/drawable/placeholder_*.xml   # 找色模板占位资源
-│   └── src/main/res/raw/default_profile.json     # 示例配置
-├── build.gradle.kts
-└── settings.gradle.kts
+│   │   ├── MainActivity.kt               # UI 入口，请求权限与加载配置
+│   │   ├── SettingsActivity.kt           # 简易设置页面
+│   │   ├── WechatMonitoringService.kt    # 前台服务：截图、OCR、调度场景
+│   │   ├── automation/
+│   │   │   ├── AutomationOrchestrator.kt # 多场景动作编排、剪贴板管理
+│   │   │   └── WechatAutomationService.kt# 辅助功能服务，执行带随机偏移的点击/长按/返回
+│   │   ├── ocr/ImageAnalyzer.kt          # 模板匹配 + 坐标转换
+│   │   ├── ocr/TemplateRepository.kt     # “相册”导入与缓存
+│   │   ├── ocr/TextAnalyzer.kt           # ML Kit OCR 解析
+│   │   └── profile/*                     # 配置数据类与加载器
+│   ├── src/main/res/raw/default_profile.json   # 默认关键词转发工作流
+│   ├── src/main/res/raw/debug_profile.json     # 关键词调试脚本（仅提示，不执行动作）
+│   └── src/main/res/raw/image_probe_profile.json # 模板调试脚本（仅提示，不执行动作）
+├── .github/workflows/android.yml         # GitHub Actions 自动构建
+├── build.gradle.kts / settings.gradle.kts
+└── README.md
 ```
-
-## 编译与部署
-
-1. **导入工程**：使用 Android Studio Electric Eel 或更高版本，`File` → `Open...` 选择 `android-bot` 目录。
-2. **同步依赖**：等待 Gradle 同步完成；项目默认使用 Kotlin + Material3，并依赖 `kotlinx-coroutines`、`gson` 等常见库。
-3. **连接设备**：准备一台 Android 8.0 (API 26) 及以上手机，打开开发者选项中的 *安装未知应用* 权限，以便侧载 apk。
-4. **构建安装**：在 Android Studio 中选择 `app` 模块，点击 *Run* 或执行 `gradle assembleDebug`（或在 IDE 中触发同名任务），将生成的 `app-debug.apk` 安装到手机。
 
 ## GitHub Actions 自动编译
 
-仓库已经内置 `.github/workflows/android.yml`，会在 `main`/`master` 分支 push 以及任意 PR 时自动：
+仓库内置 `Android CI` workflow，提交到主分支或任意 PR 时会自动：
 
-1. 检出仓库并安装 Temurin JDK 17。
-2. 通过 `gradle/gradle-build-action` 下载 Gradle 8.5，定位到 `android-bot` 目录执行 `assembleDebug`。
-3. 在 `Artifacts` 中上传调试版 APK（路径：`android-bot/app/build/outputs/apk/debug/app-debug.apk`），便于下载侧载。
+1. 安装 Temurin JDK 17 与 Gradle 8.5。
+2. 同步 Android 依赖并执行 `./gradlew -p android-bot assembleDebug`。
+3. 产出 `app-debug.apk` 并作为构建工件上传，便于直接下载侧载。
 
-如需在本地复现 CI，可使用 `gradle assembleDebug` 或在 Android Studio 的 Gradle 面板运行同名任务。
+如需本地验证，可运行：
 
-## 首次授权步骤
+```bash
+./gradlew -p android-bot assembleDebug
+```
 
-1. 打开应用后点击 **Grant permissions**：
-   - 授权通知权限（Android 13+）。
-   - 自动跳转到系统的无障碍设置页面，启用 “WeChat Automation”。
-   - 弹出系统录屏授权对话框，勾选“不要再次提示”，允许截屏。
-   - 首次启动会提示悬浮窗权限，需手动允许，以显示状态浮窗。
-2. 返回应用点击 **Load automation profile**，加载 `default_profile.json` 中的示例配置。
-3. 确保微信已登录目标小号，并打开通知的聊天窗口。此后服务会在后台持续运行，状态可在通知栏及浮窗查看。
+> 当前环境无法访问外网下载 Android 依赖，因此在仓库内未执行实际构建。
 
-## 自定义配置
+## 首次使用步骤
 
-复制 `app/src/main/res/raw/default_profile.json`，修改以下字段即可适配不同设备与流程：
+1. **安装与启动**：将 CI 生成或本地构建的 APK 安装到 Android 8.0+ 手机，启动应用。
+2. **授权**：点击 `Grant permissions` 按钮，依次完成：
+   - 通知权限（Android 13+）。
+   - 无障碍服务授权，启用 “WeChat Automation”。
+   - 录屏权限（勾选“允许记住选择”）。
+   - 悬浮窗权限，用于显示状态提示。
+3. **加载配置**：在应用内下拉框选择“默认脚本”“调试脚本”或“模板调试脚本”，如有自定义文件可导入 JSON 后点击 `应用`。状态栏与悬浮窗会提示已加载场景数量。
+4. **保持微信在前台**：确保微信已登录目标小号，停留在主界面或最近的聊天列表，自动化即可开始工作。
 
-- `forwardContact`：需要转发到的联系人名称，后续可在辅助功能逻辑中使用。
-- `allowedSenders`：可选列表，用于二次校验通知来源。
-- `targets`：找色规则数组，每项含义如下：
-  - `sampleRegion`：取色区域的左上角坐标与宽高（单位：像素，基于屏幕原始分辨率）。
-  - `hsvRange`：HSV 的上下限，建议通过手机截图 + 图像工具（如 Photoshop）取色后填写。
-  - `templateAsset`：指向 `res/drawable` 中的占位资源，可用来快速可视化目标颜色。
-  - `tapAction`：命中后要执行的点击位置（像素坐标）与延迟毫秒数，利用辅助功能手势完成。
-- `heartbeatSeconds`：截图与分析的间隔时间，默认 90 秒。
+## 识别工作流说明
 
-自定义完成后将文件放入 `res/raw` 并更新 `MainActivity` 中的 `R.raw.default_profile` 引用即可。
+`default_profile.json` 采用如下结构：
 
-## 运行时建议
+```json
+{
+  "name": "默认关键词转发",
+  "heartbeatSeconds": 45,
+  "scenes": [
+    {
+      "id": "main_open_service",
+      "title": "主界面-打开服务号会话",
+      "keywords": ["服务号"],
+      "minMatchRatio": 0.75,
+      "actions": [ { "type": "TAP", ... }, { "type": "WAIT", ... } ],
+      "nextSceneId": "service_copy_message"
+    },
+    ...
+  ]
+}
+```
 
-- 为防止系统在后台回收服务，可在电池管理中把应用加入白名单，并保持手机接通电源与稳定网络。
-- 建议定期验证 HSV 匹配效果，因为微信 UI 版本更新可能导致配色变化。
-- 如果需要更复杂的动作（例如输入文本、滚动选择联系人等），可在 `WechatMonitoringService.handleMatches` 中扩展逻辑，例如结合节点查找、正则过滤等手段。
+- **keywords**：OCR 命中所需关键字列表，满足 `minMatchRatio` 即判定命中；默认全屏检测，可留空表示此场景仅依赖图片模板。
+- **imageTargets**：可选模板列表，`name` 对应 `ocr_gallery` 中的文件名，`threshold` 为相似度阈值（0~1，建议 ≥0.65）。当 `keywords` 与 `imageTargets` 同时存在时，以关键词识别结果为准，模板命中仅用于辅助生成点击偏移范围。
+- **actions**：
+  - `TAP` / `LONG_PRESS`：带有 `x`、`y`（像素坐标）、`durationMs`（长按时长）与 `delayMs`（动作后的延迟）。
+  - `WAIT`：纯延迟，单位毫秒。
+  - `COPY_REGION_TO_CLIPBOARD`：将指定区域内 OCR 文本写入剪贴板，保证后续粘贴稳定。
+  - `PASTE_CLIPBOARD`：点击“粘贴”菜单项或图标，可与 `LONG_PRESS` 组合实现长按输入框 → 选择粘贴。
+  - `GLOBAL_BACK`：调用系统返回，配合微信原生返回键或手势。
+- **nextSceneId**：可选字段，在执行完成后优先解锁下一场景的冷却，形成完整链路。
+- **cooldownMs**：场景冷却时间，避免重复触发。
+- **debugOnly**：调试脚本专用，命中后只弹出归一化坐标提示，不执行任何动作。
 
-## 升级方向
+默认工作流共 4 个场景、18 个动作，覆盖：
 
-- 接入 OCR 或富文本解析，实现更精确的通知过滤。
-- 引入 WorkManager 定时唤醒与自恢复逻辑，增强长时间稳定性。
-- 将配置改为远程下发或本地可视化编辑，方便非技术人员调整规则。
+1. 主聊天界面：锁定服务号头像并进入会话。
+2. 服务号会话：长按最新通知、复制文本、点击菜单“复制”、返回列表。
+3. 主聊天界面：进入目标联系人会话。
+4. 联系人会话：点击输入框、长按弹出菜单、粘贴、点击发送、返回。
+
+## 导入自定义图片 & 调参与调试
+
+- **应用内导入**：在主界面点击 `导入图片`，从系统相册选择素材，应用会复制到 `Android/data/<package>/files/ocr_gallery/` 并提示文件名，可直接在 JSON `imageTargets` 中引用。
+- **屏幕坐标测量**：可用系统录屏 + 截图标注工具测量关键按钮位置；亦可在 `default_profile.json` 中根据分辨率缩放。
+- **OCR 关键词调优**：微信 UI 更新或多语言环境下可修改 `keywords`；默认整屏检测，如需限定范围可在场景或动作中额外指定 `region`。
+- **图片模板调优**：建议对同一元素准备 2~3 张不同状态截图（未读、已读等），分别放入 `imageTargets` 以提升稳定性。
+- **模板调试脚本**：选择“模板调试脚本”即可快速验证导入的 PNG/JPG 是否能命中，命中后悬浮提示会显示归一化坐标，便于微调阈值。
+- **脚本节奏调整**：通过 `delayMs` 与 `cooldownMs` 控制节奏，确保页面完成跳转后再执行下一步。
+- **日志与状态**：悬浮窗会显示“执行场景: xxx”，调试脚本额外弹出淡出提示，可验证识别区域是否正确。
+
+## 脚本管理与编辑
+
+- 首页新增脚本下拉框，可在“默认脚本 / 调试脚本 / 本地自定义”之间即时切换；点击 `应用` 即可下发给前台服务。
+- `导入 JSON` 支持系统文件选择器读取外部脚本，编辑后可 `保存` 到应用私有目录，应用会同步更新 JSON 内的 `name` 字段。
+- 所有点击与长按动作都会按照检测区域自动加入约 10% 的随机偏移，无需手动配置偏移参数。
+
+## 识别分辨率与性能
+
+- 截屏默认以整屏分辨率采集，`TextAnalyzer` 会在短边超过 1080 像素时自动缩放后再 OCR，并将坐标映射回原始尺寸，因此素材分辨率无须与设备完全一致。
+- 图片模板匹配同样会按需缩放屏幕与模板，并尝试不同缩放比例（0.75~1.25 倍）来适配不同 DPI，找到最佳匹配得分。
+- 若设备性能有限，可提升 `heartbeatSeconds` 或减少场景数量，以降低识别频率；调试脚本也可用于快速观察识别是否稳定。
+
+## 稳定性建议
+
+- 将应用添加到系统电池优化白名单，避免后台被杀。
+- 建议保持手机充电、锁定微信在前台或多任务后台，减少被系统回收的概率。
+- 定期人工抽检 OCR 精度，必要时更新关键词或坐标。
 
 ## 免责声明
 
-自动化脚本具有潜在风险，请确保已获得账号所有者授权，并符合微信及当地法律法规要求。因使用此项目造成的任何损失由使用者自行承担。
+使用自动化脚本存在封号与法律风险，请务必取得账号所有者授权并遵守相关条款。项目作者不承担因使用该项目造成的任何直接或间接损失。

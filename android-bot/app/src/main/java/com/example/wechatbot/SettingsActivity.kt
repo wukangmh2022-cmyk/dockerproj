@@ -1,6 +1,7 @@
 package com.example.wechatbot
 
 import android.os.Bundle
+import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import com.example.wechatbot.databinding.ActivityMainBinding
 
@@ -15,7 +16,9 @@ class SettingsActivity : AppCompatActivity() {
         binding.statusText.text = getString(R.string.service_description)
         binding.requestPermissionsButton.text = getString(android.R.string.ok)
         binding.requestPermissionsButton.setOnClickListener { finish() }
-        binding.loadProfileButton.text = getString(android.R.string.cancel)
-        binding.loadProfileButton.setOnClickListener { finish() }
+        binding.profileSelector.visibility = View.GONE
+        binding.profileNameInput.visibility = View.GONE
+        binding.profileEditor.visibility = View.GONE
+        binding.buttonRow.visibility = View.GONE
     }
 }

@@ -1,4 +1,21 @@
 <resources>
     <string name="app_name">Wechat Automation</string>
-    <string name="service_description">Forward WeChat service notifications after color detection.</string>
+    <string name="service_description">Forward WeChat service notifications using on-device OCR orchestration.</string>
+    <string name="profile_loaded_template">已载入%1$d个自动化场景</string>
+    <string name="hint_profile_name">脚本名称</string>
+    <string name="action_import_json">导入 JSON</string>
+    <string name="action_import_image">导入图片</string>
+    <string name="action_save">保存</string>
+    <string name="action_apply">应用</string>
+    <string name="error_empty_profile">Profile JSON 为空</string>
+    <string name="error_invalid_profile">无法解析脚本 JSON，请检查格式</string>
+    <string name="message_profile_saved">脚本已保存</string>
+    <string name="message_profile_imported">已导入 JSON，可继续编辑</string>
+    <string name="message_template_imported">图片 %1$s 已复制到 %2$s，可在 JSON 中引用</string>
+    <string name="error_import_failed">导入失败，无法读取文件</string>
+    <string name="error_template_import_failed">导入图片失败，请重试</string>
+    <string name="imported_profile_fallback">导入脚本</string>
+    <string name="profile_builtin_default">默认脚本</string>
+    <string name="profile_builtin_debug">调试脚本</string>
+    <string name="profile_builtin_image_debug">模板调试脚本</string>
 </resources>

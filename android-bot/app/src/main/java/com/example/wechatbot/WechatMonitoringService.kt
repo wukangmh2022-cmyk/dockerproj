@@ -16,14 +16,17 @@ import android.media.projection.MediaProjectionManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.WindowManager
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
+import com.example.wechatbot.automation.AutomationOrchestrator
 import com.example.wechatbot.automation.WechatAutomationService
-import com.example.wechatbot.color.ColorAnalyzer
+import com.example.wechatbot.ocr.TemplateRepository
+import com.example.wechatbot.ocr.TextAnalyzer
 import com.example.wechatbot.profile.AutomationProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,23 +36,26 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
-
 import kotlinx.coroutines.launch
 
 class WechatMonitoringService : LifecycleService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var overlayView: TextView? = null
     private var profile: AutomationProfile? = null
-    private var colorAnalyzer: ColorAnalyzer? = null
+    private var textAnalyzer: TextAnalyzer? = null
+    private var orchestrator: AutomationOrchestrator? = null
+    private lateinit var templateRepository: TemplateRepository
     private var mediaProjection: android.media.projection.MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
+    private var transientView: TextView? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification("Idle"))
         showOverlay("Waiting for profile")
+        templateRepository = TemplateRepository(applicationContext)
         scope.launch {
             screenPermissionFlow.collect { permission ->
                 if (permission != null) {
@@ -64,6 +70,10 @@ class WechatMonitoringService : LifecycleService() {
         overlayView?.let { view ->
             val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
             windowManager.removeView(view)
+        }
+        transientView?.let { view ->
+            val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            runCatching { windowManager.removeView(view) }
         }
         stopProjection()
         scope.cancel()
@@ -80,12 +90,26 @@ class WechatMonitoringService : LifecycleService() {
 
     fun updateProfile(profile: AutomationProfile) {
         this.profile = profile
-        if (colorAnalyzer == null) {
-            colorAnalyzer = ColorAnalyzer(applicationContext, profile)
-        } else {
-            colorAnalyzer?.updateProfile(profile)
+        if (textAnalyzer == null) {
+            textAnalyzer = TextAnalyzer()
         }
-        updateStatus("Profile loaded: ${profile.name}")
+        if (orchestrator == null) {
+            orchestrator = AutomationOrchestrator(
+                applicationContext,
+                scope,
+                profile,
+                templateRepository,
+                ::handleStatusMessage
+            )
+        } else {
+            orchestrator?.updateProfile(profile)
+        }
+        handleStatusMessage(
+            AutomationOrchestrator.StatusMessage(
+                "Profile loaded: ${profile.name}",
+                transient = false
+            )
+        )
     }
 
     private fun showOverlay(message: String) {
@@ -97,6 +121,8 @@ class WechatMonitoringService : LifecycleService() {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         )
+        params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        params.y = resources.displayMetrics.density.times(48).toInt()
         runCatching {
             overlayView?.let { existing ->
                 windowManager.removeView(existing)
@@ -104,15 +130,22 @@ class WechatMonitoringService : LifecycleService() {
             val view = LayoutInflater.from(this)
                 .inflate(android.R.layout.simple_list_item_1, null) as TextView
             view.text = message
+            view.setBackgroundResource(android.R.drawable.toast_frame)
             overlayView = view
             windowManager.addView(view, params)
         }
     }
 
-    private fun updateStatus(status: String) {
-        showOverlay(status)
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(NOTIFICATION_ID, buildNotification(status))
+    private fun handleStatusMessage(message: AutomationOrchestrator.StatusMessage) {
+        scope.launch {
+            if (message.transient) {
+                showTransient(message.text)
+            } else {
+                showOverlay(message.text)
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                manager.notify(NOTIFICATION_ID, buildNotification(message.text))
+            }
+        }
     }
 
     private fun buildNotification(status: String): Notification {
@@ -167,7 +200,12 @@ class WechatMonitoringService : LifecycleService() {
         scope.launch(Dispatchers.Default) {
             captureLoop()
         }
-        updateStatus("Screen capture active")
+        handleStatusMessage(
+            AutomationOrchestrator.StatusMessage(
+                "Screen capture active",
+                transient = false
+            )
+        )
     }
 
     private fun stopProjection() {
@@ -187,27 +225,56 @@ class WechatMonitoringService : LifecycleService() {
                 val bitmap = image.toBitmap()
                 image.close()
                 if (bitmap != null && profile != null) {
-                    val analyzer = colorAnalyzer ?: ColorAnalyzer(applicationContext, profile!!).also {
-                        colorAnalyzer = it
-                    }
-                    val matches = analyzer.evaluate(bitmap)
-                    if (matches.isNotEmpty()) {
-                        handleMatches(matches)
-                    }
+                    val analyzer = textAnalyzer ?: TextAnalyzer().also { textAnalyzer = it }
+                    val analysis = analyzer.analyze(bitmap)
+                    orchestrator?.processFrame(bitmap, analysis)
+                    bitmap.recycle()
                 }
             }
             delay((profile?.heartbeatSeconds ?: 90L) * 1000L / 3)
         }
     }
 
-    private fun handleMatches(matches: List<ColorAnalyzer.ColorMatch>) {
-        val topMatch = matches.firstOrNull() ?: return
-        val status = "Detected ${topMatch.target.id} score=${"%.2f".format(topMatch.score)}"
-        updateStatus(status)
-        val action = topMatch.target.tapAction ?: return
-        scope.launch(Dispatchers.Main) {
-            delay(action.delayMs)
-            WechatAutomationService.tap(action.x, action.y)
+    private fun showTransient(message: String) {
+        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        )
+        params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        params.y = resources.displayMetrics.density.times(96).toInt()
+
+        runCatching {
+            transientView?.let { existing ->
+                windowManager.removeView(existing)
+            }
+            val view = LayoutInflater.from(this)
+                .inflate(android.R.layout.simple_list_item_1, null) as TextView
+            view.text = message
+            view.setBackgroundResource(android.R.drawable.toast_frame)
+            view.alpha = 0f
+            transientView = view
+            windowManager.addView(view, params)
+            view.animate()
+                .alpha(1f)
+                .setDuration(150)
+                .withEndAction {
+                    view.animate()
+                        .alpha(0f)
+                        .setStartDelay(1200)
+                        .setDuration(400)
+                        .withEndAction {
+                            runCatching { windowManager.removeView(view) }
+                            if (transientView === view) {
+                                transientView = null
+                            }
+                        }
+                        .start()
+                }
+                .start()
         }
     }
 
