@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Wechat Automation</string>
+    <string name="service_description">Forward WeChat service notifications after color detection.</string>
+</resources>
