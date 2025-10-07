@@ -1,0 +1,31 @@
+{
+  "name": "Sample Server Account Forwarder",
+  "forwardContact": "Team Inbox",
+  "allowedSenders": ["Service Account", "Mini Program"],
+  "heartbeatSeconds": 90,
+  "targets": [
+    {
+      "id": "service_indicator",
+      "description": "Green indicator bubble on service chat",
+      "sampleRegion": {"x": 120, "y": 420, "width": 60, "height": 60},
+      "hsvRange": {"hueMin": 70.0, "hueMax": 150.0, "saturationMin": 0.3, "saturationMax": 1.0, "valueMin": 0.3, "valueMax": 1.0},
+      "templateAsset": "placeholder_green",
+      "tapAction": {"x": 540.0, "y": 880.0, "delayMs": 300}
+    },
+    {
+      "id": "confirm_button",
+      "description": "Red confirm button on forward dialog",
+      "sampleRegion": {"x": 540, "y": 1780, "width": 120, "height": 80},
+      "hsvRange": {"hueMin": 0.0, "hueMax": 25.0, "saturationMin": 0.4, "saturationMax": 1.0, "valueMin": 0.4, "valueMax": 1.0},
+      "templateAsset": "placeholder_red",
+      "tapAction": {"x": 540.0, "y": 1820.0, "delayMs": 200}
+    },
+    {
+      "id": "confirmation_banner",
+      "description": "Yellow toast confirming forward",
+      "sampleRegion": {"x": 120, "y": 240, "width": 800, "height": 120},
+      "hsvRange": {"hueMin": 40.0, "hueMax": 65.0, "saturationMin": 0.2, "saturationMax": 0.8, "valueMin": 0.6, "valueMax": 1.0},
+      "templateAsset": "placeholder_yellow"
+    }
+  ]
+}
