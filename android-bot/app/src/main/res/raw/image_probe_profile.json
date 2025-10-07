@@ -1,0 +1,42 @@
+{
+  "name": "调试：模板探测",
+  "heartbeatSeconds": 30,
+  "scenes": [
+    {
+      "id": "template_main_service",
+      "title": "模板-服务号入口",
+      "imageTargets": [
+        { "name": "main_service_tab.png", "threshold": 0.7 }
+      ],
+      "cooldownMs": 2500,
+      "debugOnly": true
+    },
+    {
+      "id": "template_service_notice",
+      "title": "模板-服务号消息",
+      "imageTargets": [
+        { "name": "service_message_cell.png", "threshold": 0.7 }
+      ],
+      "cooldownMs": 2500,
+      "debugOnly": true
+    },
+    {
+      "id": "template_contact_entry",
+      "title": "模板-联系人入口",
+      "imageTargets": [
+        { "name": "main_target_contact.png", "threshold": 0.7 }
+      ],
+      "cooldownMs": 2500,
+      "debugOnly": true
+    },
+    {
+      "id": "template_send_button",
+      "title": "模板-发送按钮",
+      "imageTargets": [
+        { "name": "contact_send_button.png", "threshold": 0.68 }
+      ],
+      "cooldownMs": 2500,
+      "debugOnly": true
+    }
+  ]
+}

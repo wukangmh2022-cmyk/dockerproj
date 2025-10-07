@@ -1,0 +1,38 @@
+{
+  "name": "调试：全屏关键词探测",
+  "heartbeatSeconds": 30,
+  "scenes": [
+    {
+      "id": "debug_main_service",
+      "title": "主界面-服务号",
+      "keywords": ["服务号"],
+      "minMatchRatio": 0.6,
+      "cooldownMs": 2500,
+      "debugOnly": true
+    },
+    {
+      "id": "debug_service_notice",
+      "title": "服务号-通知文本",
+      "keywords": ["通知", "提醒"],
+      "minMatchRatio": 0.5,
+      "cooldownMs": 2500,
+      "debugOnly": true
+    },
+    {
+      "id": "debug_contact_thread",
+      "title": "联系人-聊天抬头",
+      "keywords": ["张三"],
+      "minMatchRatio": 0.5,
+      "cooldownMs": 2500,
+      "debugOnly": true
+    },
+    {
+      "id": "debug_send_button",
+      "title": "聊天-发送区域",
+      "keywords": ["发送"],
+      "minMatchRatio": 0.5,
+      "cooldownMs": 2500,
+      "debugOnly": true
+    }
+  ]
+}
