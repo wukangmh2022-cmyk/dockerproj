@@ -58,6 +58,12 @@ class ProfileRepository(private val context: Context) {
         )
     }
 
+    fun deleteProfile(id: String): Boolean {
+        if (!id.startsWith(CUSTOM_PREFIX)) return false
+        val file = File(profilesDir, id.removePrefix(CUSTOM_PREFIX) + ".json")
+        return file.delete()
+    }
+
     fun loadProfileById(id: String): Document? {
         return when {
             id == BUILTIN_DEFAULT_ID -> loadBuiltIn(BUILTIN_DEFAULT_ID, context.getString(R.string.profile_builtin_default), R.raw.default_profile)

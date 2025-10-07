@@ -19,6 +19,7 @@ import android.os.IBinder
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.WindowManager
+import android.widget.Button
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -33,14 +34,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class WechatMonitoringService : LifecycleService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var overlayView: TextView? = null
+    private var overlayView: android.view.View? = null
+    private var overlayStatusView: TextView? = null
+    private var overlayStartButton: Button? = null
+    private var overlayPauseButton: Button? = null
+    private var transientView: TextView? = null
     private var profile: AutomationProfile? = null
     private var textAnalyzer: TextAnalyzer? = null
     private var orchestrator: AutomationOrchestrator? = null
@@ -48,14 +55,16 @@ class WechatMonitoringService : LifecycleService() {
     private var mediaProjection: android.media.projection.MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
-    private var transientView: TextView? = null
+    private val automationEnabled = MutableStateFlow(false)
+    private var currentStatus: String = "等待脚本"
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("Idle"))
-        showOverlay("Waiting for profile")
+        startForeground(NOTIFICATION_ID, buildNotification(currentStatus))
         templateRepository = TemplateRepository(applicationContext)
+        updateOverlay(currentStatus)
+        publishState()
         scope.launch {
             screenPermissionFlow.collect { permission ->
                 if (permission != null) {
@@ -69,7 +78,7 @@ class WechatMonitoringService : LifecycleService() {
         super.onDestroy()
         overlayView?.let { view ->
             val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            windowManager.removeView(view)
+            runCatching { windowManager.removeView(view) }
         }
         transientView?.let { view ->
             val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -77,6 +86,8 @@ class WechatMonitoringService : LifecycleService() {
         }
         stopProjection()
         scope.cancel()
+        automationEnabled.value = false
+        serviceState.value = ServiceState()
     }
 
     override fun onBind(intent: Intent): IBinder {
@@ -110,38 +121,34 @@ class WechatMonitoringService : LifecycleService() {
                 transient = false
             )
         )
+        publishState()
     }
 
-    private fun showOverlay(message: String) {
-        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT
-        )
-        params.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        params.y = resources.displayMetrics.density.times(48).toInt()
-        runCatching {
-            overlayView?.let { existing ->
-                windowManager.removeView(existing)
-            }
-            val view = LayoutInflater.from(this)
-                .inflate(android.R.layout.simple_list_item_1, null) as TextView
-            view.text = message
-            view.setBackgroundResource(android.R.drawable.toast_frame)
-            overlayView = view
-            windowManager.addView(view, params)
+    fun setAutomationEnabled(enabled: Boolean) {
+        val changed = automationEnabled.value != enabled
+        automationEnabled.value = enabled
+        publishState()
+        if (changed) {
+            val status = if (enabled) getString(R.string.status_running) else getString(R.string.status_paused)
+            handleStatusMessage(
+                AutomationOrchestrator.StatusMessage(
+                    "自动化状态: $status",
+                    transient = false
+                )
+            )
+        } else {
+            updateOverlay()
         }
     }
+
+    fun isAutomationEnabled(): Boolean = automationEnabled.value
 
     private fun handleStatusMessage(message: AutomationOrchestrator.StatusMessage) {
         scope.launch {
             if (message.transient) {
                 showTransient(message.text)
             } else {
-                showOverlay(message.text)
+                updateOverlay(message.text)
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 manager.notify(NOTIFICATION_ID, buildNotification(message.text))
             }
@@ -219,6 +226,10 @@ class WechatMonitoringService : LifecycleService() {
 
     private suspend fun captureLoop() {
         while (scope.isActive) {
+            if (!automationEnabled.value || profile == null) {
+                delay(500)
+                continue
+            }
             val reader = imageReader ?: break
             val image = reader.acquireLatestImage()
             if (image != null) {
@@ -278,6 +289,41 @@ class WechatMonitoringService : LifecycleService() {
         }
     }
 
+    private fun updateOverlay(status: String? = null) {
+        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val view = ensureOverlay(windowManager)
+        status?.let { currentStatus = it }
+        overlayStatusView?.text = currentStatus
+        overlayStartButton?.isEnabled = !automationEnabled.value
+        overlayPauseButton?.isEnabled = automationEnabled.value
+        publishState()
+    }
+
+    private fun ensureOverlay(windowManager: WindowManager): android.view.View {
+        overlayView?.let { return it }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = resources.displayMetrics.density.times(48).toInt()
+        }
+        val view = LayoutInflater.from(this).inflate(R.layout.overlay_controls, null)
+        overlayStatusView = view.findViewById(R.id.overlayStatus)
+        overlayStartButton = view.findViewById<Button>(R.id.overlayStart).apply {
+            setOnClickListener { setAutomationEnabled(true) }
+        }
+        overlayPauseButton = view.findViewById<Button>(R.id.overlayPause).apply {
+            setOnClickListener { setAutomationEnabled(false) }
+        }
+        overlayView = view
+        windowManager.addView(view, params)
+        return view
+    }
+
     private fun Image.toBitmap(): Bitmap? {
         if (format != PixelFormat.RGBA_8888 && format != PixelFormat.RGBX_8888) return null
         val plane = planes.firstOrNull() ?: return null
@@ -294,10 +340,21 @@ class WechatMonitoringService : LifecycleService() {
         return Bitmap.createBitmap(bitmap, 0, 0, width, height)
     }
 
+    private fun publishState() {
+        serviceState.update {
+            it.copy(
+                automationEnabled = automationEnabled.value,
+                profileName = profile?.name,
+                status = currentStatus
+            )
+        }
+    }
+
     companion object {
         private const val CHANNEL_ID = "wechat_monitoring"
         private const val NOTIFICATION_ID = 2001
         private val screenPermissionFlow = MutableStateFlow<ScreenCapturePermission?>(null)
+        private val serviceState = MutableStateFlow(ServiceState())
 
         fun createPermissionIntent(context: Context): Intent {
             val mediaProjectionManager =
@@ -310,7 +367,7 @@ class WechatMonitoringService : LifecycleService() {
         }
 
         suspend fun handleAccessibilityEvent(service: WechatAutomationService, event: android.view.accessibility.AccessibilityEvent) {
-            // placeholder for event handling (text detection etc.)
+            // placeholder for event handling
         }
 
         fun updateProfile(context: Context, profile: AutomationProfile) {
@@ -327,7 +384,15 @@ class WechatMonitoringService : LifecycleService() {
             }
             context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
         }
+
+        fun observeState(): StateFlow<ServiceState> = serviceState
     }
 
     data class ScreenCapturePermission(val resultCode: Int, val data: Intent)
+
+    data class ServiceState(
+        val automationEnabled: Boolean = false,
+        val profileName: String? = null,
+        val status: String = ""
+    )
 }

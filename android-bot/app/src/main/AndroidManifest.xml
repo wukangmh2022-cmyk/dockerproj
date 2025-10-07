@@ -31,7 +31,7 @@
         </service>
 
         <service
-            android:name=".automation.WechatMonitoringService"
+            android:name=".WechatMonitoringService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
@@ -44,6 +44,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ProfileEditorActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
+            android:name=".GalleryActivity"
+            android:exported="false" />
     </application>
 
 </manifest>

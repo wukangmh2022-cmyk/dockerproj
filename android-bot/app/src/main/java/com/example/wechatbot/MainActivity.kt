@@ -2,43 +2,42 @@ package com.example.wechatbot
 
 import android.Manifest
 import android.app.Activity
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.provider.Settings
-import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
-import com.example.wechatbot.automation.WechatAutomationService
+import androidx.lifecycle.repeatOnLifecycle
 import com.example.wechatbot.databinding.ActivityMainBinding
-import com.example.wechatbot.ocr.TemplateRepository
 import com.example.wechatbot.profile.ProfileLoader
 import com.example.wechatbot.profile.ProfileRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.BufferedReader
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var repository: ProfileRepository
-    private lateinit var templateRepository: TemplateRepository
 
     private var documents: List<ProfileRepository.Document> = emptyList()
-    private var selectedDocument: ProfileRepository.Document? = null
+    private var selectedIndex: Int = -1
+    private var monitoringService: WechatMonitoringService? = null
+    private var startWhenConnected: Boolean = false
 
     private val notificationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) {
-                Toast.makeText(this, R.string.service_description, Toast.LENGTH_SHORT).show()
-                binding.statusText.text = getString(R.string.service_description)
-            } else {
-                binding.statusText.text = getString(R.string.app_name)
-            }
-        }
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     private val mediaProjectionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -46,24 +45,33 @@ class MainActivity : AppCompatActivity() {
                 val data = result.data
                 if (data != null) {
                     WechatAutomationService.enqueueScreenCapturePermission(this, result.resultCode, data)
-                    binding.statusText.text = getString(R.string.service_description)
                 }
             }
         }
 
-    private val importProfileLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) {
-                importProfile(uri)
+    private val profileEditorLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            if (result.resultCode == Activity.RESULT_OK) {
+                val updatedId = result.data?.getStringExtra(ProfileEditorActivity.EXTRA_UPDATED_ID)
+                refreshProfiles(updatedId)
+            } else {
+                refreshProfiles()
             }
         }
 
-    private val importImageLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) {
-                importTemplate(uri)
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            monitoringService = (service as? WechatMonitoringService.LocalBinder)?.getService()
+            if (startWhenConnected) {
+                monitoringService?.setAutomationEnabled(true)
+                startWhenConnected = false
             }
         }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            monitoringService = null
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,99 +79,79 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         repository = ProfileRepository(applicationContext)
-        templateRepository = TemplateRepository(applicationContext)
 
-        binding.requestPermissionsButton.setOnClickListener {
-            requestPermissions()
-        }
-
-        binding.importProfileButton.setOnClickListener {
-            openJsonPicker()
-        }
-
-        binding.importImageButton.setOnClickListener {
-            openImagePicker()
-        }
-
-        binding.saveProfileButton.setOnClickListener {
-            saveProfile()
-        }
-
-        binding.applyProfileButton.setOnClickListener {
-            applyProfile()
-        }
-
-        binding.profileSelector.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
-                documents.getOrNull(position)?.let { selectDocument(it) }
-            }
-
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
-        }
-
+        setupToolbar()
+        setupList()
+        setupButtons()
+        observeServiceState()
         refreshProfiles()
     }
 
-    private fun requestPermissions() {
-        if (!WechatAutomationService.isAccessibilityEnabled(this)) {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        mediaProjectionLauncher.launch(WechatMonitoringService.createPermissionIntent(this))
+    override fun onStart() {
+        super.onStart()
+        val intent = Intent(this, WechatMonitoringService::class.java)
+        ContextCompat.startForegroundService(this, intent)
+        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        updatePermissionState()
     }
 
-    private fun openJsonPicker() {
-        importProfileLauncher.launch(arrayOf("application/json", "text/plain"))
+    override fun onResume() {
+        super.onResume()
+        updatePermissionState()
     }
 
-    private fun openImagePicker() {
-        importImageLauncher.launch(arrayOf("image/png", "image/jpeg", "image/jpg", "image/webp"))
+    override fun onStop() {
+        super.onStop()
+        runCatching { unbindService(serviceConnection) }
+        monitoringService = null
     }
 
-    private fun saveProfile() {
-        lifecycleScope.launch {
-            val context = applicationContext
-            val currentJson = binding.profileEditor.text?.toString() ?: ""
-            if (currentJson.isBlank()) {
-                Toast.makeText(context, R.string.error_empty_profile, Toast.LENGTH_SHORT).show()
-                return@launch
-            }
-            val displayName = binding.profileNameInput.text?.toString()?.trim().orEmpty()
-            val doc = withContext(Dispatchers.IO) {
-                repository.saveProfile(selectedDocument?.takeIf { it.editable }?.id, displayName, currentJson)
-            }
-            if (doc != null) {
-                Toast.makeText(context, R.string.message_profile_saved, Toast.LENGTH_SHORT).show()
-                refreshProfiles(doc.id)
-            } else {
-                Toast.makeText(context, R.string.error_invalid_profile, Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun applyProfile() {
-        lifecycleScope.launch {
-            val context = applicationContext
-            val currentJson = binding.profileEditor.text?.toString() ?: ""
-            if (currentJson.isBlank()) {
-                Toast.makeText(context, R.string.error_empty_profile, Toast.LENGTH_SHORT).show()
-                return@launch
-            }
-            val profile = withContext(Dispatchers.IO) {
-                ProfileLoader.loadFromString(currentJson)
-            }
-            if (profile != null) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(
-                        context,
-                        getString(R.string.profile_loaded_template, profile.scenes.size),
-                        Toast.LENGTH_SHORT
-                    ).show()
+    private fun setupToolbar() {
+        binding.toolbar.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.action_open_gallery -> {
+                    startActivity(Intent(this, GalleryActivity::class.java))
+                    true
                 }
-                WechatMonitoringService.updateProfile(context, profile)
-                binding.profileNameInput.setText(profile.name)
-            } else {
-                Toast.makeText(context, R.string.error_invalid_profile, Toast.LENGTH_SHORT).show()
+                else -> false
+            }
+        }
+    }
+
+    private fun setupList() {
+        binding.profileList.choiceMode = android.widget.ListView.CHOICE_MODE_SINGLE
+        binding.profileList.setOnItemClickListener { _, _, position, _ ->
+            selectedIndex = position
+            updateSelectionUi()
+        }
+    }
+
+    private fun setupButtons() {
+        binding.requestPermissionsButton.setOnClickListener { requestPermissions() }
+        binding.startButton.setOnClickListener { startAutomation() }
+        binding.pauseButton.setOnClickListener { pauseAutomation() }
+        binding.newProfileButton.setOnClickListener { openEditor(null) }
+        binding.editProfileButton.setOnClickListener { openEditor(currentDocument()?.id) }
+        binding.deleteProfileButton.setOnClickListener { confirmDelete() }
+    }
+
+    private fun observeServiceState() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                WechatMonitoringService.observeState().collect { state ->
+                    val statusText = when {
+                        state.automationEnabled -> getString(R.string.status_running)
+                        state.profileName != null -> getString(R.string.status_paused)
+                        else -> getString(R.string.status_idle)
+                    }
+                    binding.statusText.text = getString(
+                        R.string.status_automation_template,
+                        state.profileName ?: getString(R.string.status_idle),
+                        statusText
+                    )
+                    binding.startButton.isEnabled = currentDocument() != null && !state.automationEnabled
+                    binding.pauseButton.isEnabled = state.automationEnabled
+                }
             }
         }
     }
@@ -172,93 +160,115 @@ class MainActivity : AppCompatActivity() {
         documents = repository.loadProfiles()
         val adapter = ArrayAdapter(
             this,
-            android.R.layout.simple_spinner_item,
+            android.R.layout.simple_list_item_activated_1,
             documents.map { it.displayName }
-        ).also { it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-        binding.profileSelector.adapter = adapter
+        )
+        binding.profileList.adapter = adapter
         if (documents.isNotEmpty()) {
             val targetIndex = selectId?.let { id ->
                 documents.indexOfFirst { it.id == id }
             }?.takeIf { it >= 0 } ?: 0
-            binding.profileSelector.setSelection(targetIndex)
-            selectDocument(documents[targetIndex])
+            binding.profileList.setItemChecked(targetIndex, true)
+            selectedIndex = targetIndex
         } else {
-            selectedDocument = null
-            binding.profileEditor.setText("")
-            binding.profileNameInput.setText("")
+            selectedIndex = -1
         }
+        updateSelectionUi()
     }
 
-    private fun selectDocument(document: ProfileRepository.Document) {
-        selectedDocument = document
-        binding.profileNameInput.setText(document.displayName)
-        binding.profileEditor.setText(document.content)
-        binding.saveProfileButton.isEnabled = true
-        binding.applyProfileButton.isEnabled = true
+    private fun updateSelectionUi() {
+        val document = currentDocument()
+        binding.deleteProfileButton.visibility = if (document?.editable == true) android.view.View.VISIBLE else android.view.View.GONE
+        binding.editProfileButton.isEnabled = document != null
+        binding.startButton.isEnabled = document != null && !WechatMonitoringService.observeState().value.automationEnabled
     }
 
-    private fun importProfile(uri: Uri) {
+    private fun currentDocument(): ProfileRepository.Document? = documents.getOrNull(selectedIndex)
+
+    private fun openEditor(documentId: String?) {
+        val intent = Intent(this, ProfileEditorActivity::class.java)
+        if (documentId != null) {
+            intent.putExtra(ProfileEditorActivity.EXTRA_DOCUMENT_ID, documentId)
+        }
+        profileEditorLauncher.launch(intent)
+    }
+
+    private fun confirmDelete() {
+        val document = currentDocument() ?: return
+        if (!document.editable) return
+        AlertDialog.Builder(this)
+            .setMessage(getString(R.string.confirm_delete_profile, document.displayName))
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val removed = repository.deleteProfile(document.id)
+                    withContext(Dispatchers.Main) {
+                        if (removed) {
+                            Toast.makeText(this@MainActivity, R.string.message_profile_deleted, Toast.LENGTH_SHORT).show()
+                            refreshProfiles()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun requestPermissions() {
+        if (!WechatAutomationService.isAccessibilityEnabled(this)) {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        if (!Settings.canDrawOverlays(this)) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        mediaProjectionLauncher.launch(WechatMonitoringService.createPermissionIntent(this))
+    }
+
+    private fun updatePermissionState() {
+        val missingAccessibility = !WechatAutomationService.isAccessibilityEnabled(this)
+        val missingOverlay = !Settings.canDrawOverlays(this)
+        val missingNotification = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        val needsPermission = missingAccessibility || missingOverlay || missingNotification
+        binding.requestPermissionsButton.visibility = if (needsPermission) android.view.View.VISIBLE else android.view.View.GONE
+    }
+
+    private fun startAutomation() {
+        val document = currentDocument() ?: return
         lifecycleScope.launch {
-            val context = applicationContext
-            val json = withContext(Dispatchers.IO) { readContent(uri) }
-            if (json.isNullOrBlank()) {
-                Toast.makeText(context, R.string.error_import_failed, Toast.LENGTH_SHORT).show()
+            val profile = withContext(Dispatchers.IO) { ProfileLoader.loadFromString(document.content) }
+            if (profile == null) {
+                Toast.makeText(this@MainActivity, R.string.error_invalid_profile, Toast.LENGTH_SHORT).show()
                 return@launch
             }
-            binding.profileEditor.setText(json)
-            val profile = withContext(Dispatchers.IO) { ProfileLoader.loadFromString(json) }
-            val name = profile?.name?.ifBlank { null } ?: resolveDisplayName(uri) ?: getString(R.string.imported_profile_fallback)
-            binding.profileNameInput.setText(name)
-            selectedDocument = null
-            Toast.makeText(context, R.string.message_profile_imported, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun importTemplate(uri: Uri) {
-        lifecycleScope.launch {
-            val context = applicationContext
-            val storedName = withContext(Dispatchers.IO) {
-                val desired = resolveFileName(uri)
-                templateRepository.importTemplate(contentResolver, uri, desired)
-            }
-            if (storedName != null) {
-                val dir = templateRepository.getGalleryDirectory().absolutePath
+            withContext(Dispatchers.Main) {
+                val service = monitoringService
+                if (service != null) {
+                    service.updateProfile(profile)
+                    service.setAutomationEnabled(true)
+                } else {
+                    startWhenConnected = true
+                    WechatMonitoringService.updateProfile(applicationContext, profile)
+                }
                 Toast.makeText(
-                    context,
-                    getString(R.string.message_template_imported, storedName, dir),
-                    Toast.LENGTH_LONG
+                    this@MainActivity,
+                    getString(R.string.profile_loaded_template, profile.scenes.size),
+                    Toast.LENGTH_SHORT
                 ).show()
-            } else {
-                Toast.makeText(context, R.string.error_template_import_failed, Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    private fun readContent(uri: Uri): String? {
-        return runCatching {
-            contentResolver.openInputStream(uri)?.use { stream ->
-                BufferedReader(stream.reader()).use { it.readText() }
-            }
-        }.getOrNull()
-    }
-
-    private fun resolveDisplayName(uri: Uri): String? {
-        var name: String? = null
-        contentResolver.query(uri, arrayOf(android.provider.MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                name = cursor.getString(0)
-            }
-        }
-        return name?.substringBeforeLast('.')
-    }
-
-    private fun resolveFileName(uri: Uri): String? {
-        var name: String? = null
-        contentResolver.query(uri, arrayOf(android.provider.MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                name = cursor.getString(0)
-            }
-        }
-        return name
+    private fun pauseAutomation() {
+        monitoringService?.setAutomationEnabled(false)
     }
 }

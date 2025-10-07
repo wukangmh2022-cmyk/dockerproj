@@ -59,6 +59,17 @@ class TemplateRepository(context: Context) {
 
     fun getGalleryDirectory(): File = galleryDir
 
+    fun resolveDisplayName(contentResolver: ContentResolver, uri: Uri): String? {
+        return contentResolver.query(uri, arrayOf(android.provider.MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    cursor.getString(0)
+                } else {
+                    null
+                }
+            }
+    }
+
     private fun resolveFile(name: String): File? {
         val direct = File(galleryDir, name)
         if (direct.exists()) return direct
