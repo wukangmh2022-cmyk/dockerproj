@@ -1,0 +1,65 @@
+{
+  "name": "默认关键词转发",
+  "heartbeatSeconds": 45,
+  "scenes": [
+    {
+      "id": "main_open_service",
+      "title": "主界面-打开服务号会话",
+      "keywords": ["服务号"],
+      "minMatchRatio": 0.75,
+      "cooldownMs": 6000,
+      "nextSceneId": "service_copy_message",
+      "actions": [
+        { "type": "TAP", "x": 540.0, "y": 360.0, "delayMs": 600 },
+        { "type": "WAIT", "delayMs": 700 }
+      ]
+    },
+    {
+      "id": "service_copy_message",
+      "title": "服务号界面-复制最新通知",
+      "keywords": ["通知", "提醒"],
+      "minMatchRatio": 0.5,
+      "cooldownMs": 6000,
+      "nextSceneId": "main_open_contact",
+      "actions": [
+        { "type": "LONG_PRESS", "x": 540.0, "y": 820.0, "durationMs": 900, "delayMs": 400 },
+        { "type": "WAIT", "delayMs": 500 },
+        { "type": "COPY_REGION_TO_CLIPBOARD", "delayMs": 200, "region": { "x": 160, "y": 640, "width": 760, "height": 360 } },
+        { "type": "TAP", "x": 540.0, "y": 1230.0, "delayMs": 500 },
+        { "type": "WAIT", "delayMs": 400 },
+        { "type": "GLOBAL_BACK", "delayMs": 500 }
+      ]
+    },
+    {
+      "id": "main_open_contact",
+      "title": "主界面-进入转发联系人",
+      "keywords": ["张三"],
+      "minMatchRatio": 0.75,
+      "cooldownMs": 6000,
+      "nextSceneId": "contact_paste_and_send",
+      "actions": [
+        { "type": "TAP", "x": 520.0, "y": 980.0, "delayMs": 600 },
+        { "type": "WAIT", "delayMs": 600 }
+      ]
+    },
+    {
+      "id": "contact_paste_and_send",
+      "title": "联系人聊天-粘贴并发送",
+      "keywords": ["张三"],
+      "minMatchRatio": 0.5,
+      "cooldownMs": 6000,
+      "nextSceneId": "main_open_service",
+      "actions": [
+        { "type": "TAP", "x": 520.0, "y": 1680.0, "delayMs": 350 },
+        { "type": "WAIT", "delayMs": 350 },
+        { "type": "LONG_PRESS", "x": 520.0, "y": 1680.0, "durationMs": 800, "delayMs": 300 },
+        { "type": "WAIT", "delayMs": 400 },
+        { "type": "PASTE_CLIPBOARD", "x": 320.0, "y": 1480.0, "delayMs": 400 },
+        { "type": "WAIT", "delayMs": 300 },
+        { "type": "TAP", "x": 980.0, "y": 1680.0, "delayMs": 300 },
+        { "type": "WAIT", "delayMs": 400 },
+        { "type": "GLOBAL_BACK", "delayMs": 500 }
+      ]
+    }
+  ]
+}
