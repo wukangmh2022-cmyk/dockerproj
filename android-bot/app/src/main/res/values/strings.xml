@@ -24,6 +24,8 @@
     <string name="error_template_import_failed">导入图片失败，请重试</string>
     <string name="message_profile_imported">已导入 JSON，可继续编辑</string>
     <string name="imported_profile_fallback">导入脚本</string>
+    <string name="error_notification_permission_required">请先授权通知权限以启用前台服务</string>
+    <string name="error_service_start_failed">前台服务启动失败，请重试</string>
     <string name="profile_loaded_template">已载入%1$d个自动化场景</string>
     <string name="profile_builtin_default">默认脚本</string>
     <string name="profile_builtin_debug">调试脚本</string>
@@ -33,4 +35,10 @@
     <string name="status_paused">已暂停</string>
     <string name="status_idle">未启动</string>
     <string name="confirm_delete_profile">确定要删除脚本「%1$s」吗？</string>
+    <string name="title_accessibility_settings">辅助功能配置</string>
+    <string name="settings_description">请确认以下权限均已开启，以便自动化稳定运行。</string>
+    <string name="action_open_accessibility">打开辅助功能开关</string>
+    <string name="action_open_overlay">授权悬浮窗</string>
+    <string name="action_open_notifications">检查通知权限</string>
+    <string name="action_open_console">返回控制台</string>
 </resources>

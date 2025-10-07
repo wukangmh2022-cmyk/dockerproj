@@ -53,6 +53,11 @@
         <activity
             android:name=".GalleryActivity"
             android:exported="false" />
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="true"
+            android:theme="@style/Theme.WechatAutomation" />
     </application>
 
 </manifest>

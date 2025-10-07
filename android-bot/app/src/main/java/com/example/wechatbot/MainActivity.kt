@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -20,6 +21,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.example.wechatbot.automation.WechatAutomationService
 import com.example.wechatbot.databinding.ActivityMainBinding
 import com.example.wechatbot.profile.ProfileLoader
 import com.example.wechatbot.profile.ProfileRepository
@@ -34,10 +36,18 @@ class MainActivity : AppCompatActivity() {
     private var documents: List<ProfileRepository.Document> = emptyList()
     private var selectedIndex: Int = -1
     private var monitoringService: WechatMonitoringService? = null
+    private var isServiceBound: Boolean = false
     private var startWhenConnected: Boolean = false
 
     private val notificationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                connectToMonitoringService()
+            } else {
+                Toast.makeText(this, R.string.error_notification_permission_required, Toast.LENGTH_SHORT).show()
+            }
+            updatePermissionState()
+        }
 
     private val mediaProjectionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -62,6 +72,7 @@ class MainActivity : AppCompatActivity() {
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             monitoringService = (service as? WechatMonitoringService.LocalBinder)?.getService()
+            isServiceBound = true
             if (startWhenConnected) {
                 monitoringService?.setAutomationEnabled(true)
                 startWhenConnected = false
@@ -70,6 +81,7 @@ class MainActivity : AppCompatActivity() {
 
         override fun onServiceDisconnected(name: ComponentName?) {
             monitoringService = null
+            isServiceBound = false
         }
     }
 
@@ -89,21 +101,27 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        val intent = Intent(this, WechatMonitoringService::class.java)
-        ContextCompat.startForegroundService(this, intent)
-        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        if (hasNotificationPermission()) {
+            connectToMonitoringService()
+        }
         updatePermissionState()
     }
 
     override fun onResume() {
         super.onResume()
         updatePermissionState()
+        if (hasNotificationPermission() && !isServiceBound) {
+            connectToMonitoringService()
+        }
     }
 
     override fun onStop() {
         super.onStop()
-        runCatching { unbindService(serviceConnection) }
+        if (isServiceBound) {
+            runCatching { unbindService(serviceConnection) }
+        }
         monitoringService = null
+        isServiceBound = false
     }
 
     private fun setupToolbar() {
@@ -233,17 +251,16 @@ class MainActivity : AppCompatActivity() {
     private fun updatePermissionState() {
         val missingAccessibility = !WechatAutomationService.isAccessibilityEnabled(this)
         val missingOverlay = !Settings.canDrawOverlays(this)
-        val missingNotification = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        val missingNotification = !hasNotificationPermission()
         val needsPermission = missingAccessibility || missingOverlay || missingNotification
         binding.requestPermissionsButton.visibility = if (needsPermission) android.view.View.VISIBLE else android.view.View.GONE
     }
 
     private fun startAutomation() {
         val document = currentDocument() ?: return
+        if (!ensureServiceReady()) {
+            return
+        }
         lifecycleScope.launch {
             val profile = withContext(Dispatchers.IO) { ProfileLoader.loadFromString(document.content) }
             if (profile == null) {
@@ -270,5 +287,35 @@ class MainActivity : AppCompatActivity() {
 
     private fun pauseAutomation() {
         monitoringService?.setAutomationEnabled(false)
+    }
+
+    private fun hasNotificationPermission(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun connectToMonitoringService() {
+        if (isServiceBound) return
+        val intent = Intent(this, WechatMonitoringService::class.java)
+        ContextCompat.startForegroundService(this, intent)
+        isServiceBound = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+    }
+
+    private fun ensureServiceReady(): Boolean {
+        if (!hasNotificationPermission()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            Toast.makeText(this, R.string.error_notification_permission_required, Toast.LENGTH_SHORT).show()
+            updatePermissionState()
+            return false
+        }
+        if (!isServiceBound || monitoringService == null) {
+            connectToMonitoringService()
+        }
+        return true
     }
 }

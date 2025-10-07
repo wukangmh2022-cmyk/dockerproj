@@ -13,6 +13,7 @@ import android.hardware.display.VirtualDisplay
 import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjectionManager
+import android.provider.Settings
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -60,8 +61,11 @@ class WechatMonitoringService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
+        currentStatus = getString(R.string.status_idle)
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification(currentStatus))
+        if (!startAsForeground()) {
+            return
+        }
         templateRepository = TemplateRepository(applicationContext)
         updateOverlay(currentStatus)
         publishState()
@@ -87,7 +91,7 @@ class WechatMonitoringService : LifecycleService() {
         stopProjection()
         scope.cancel()
         automationEnabled.value = false
-        serviceState.value = ServiceState()
+        publishState()
     }
 
     override fun onBind(intent: Intent): IBinder {
@@ -182,6 +186,35 @@ class WechatMonitoringService : LifecycleService() {
         }
     }
 
+    private fun startAsForeground(): Boolean {
+        return try {
+            startForeground(NOTIFICATION_ID, buildNotification(currentStatus))
+            true
+        } catch (exception: SecurityException) {
+            val message = getString(R.string.error_notification_permission_required)
+            currentStatus = message
+            serviceState.update { state ->
+                state.copy(status = message)
+            }
+            scope.launch {
+                android.widget.Toast.makeText(applicationContext, message, android.widget.Toast.LENGTH_LONG).show()
+            }
+            stopSelf()
+            false
+        } catch (throwable: Throwable) {
+            val message = getString(R.string.error_service_start_failed)
+            currentStatus = message
+            serviceState.update { state ->
+                state.copy(status = message)
+            }
+            scope.launch {
+                android.widget.Toast.makeText(applicationContext, message, android.widget.Toast.LENGTH_LONG).show()
+            }
+            stopSelf()
+            false
+        }
+    }
+
     private fun startProjection(permission: ScreenCapturePermission) {
         stopProjection()
         val mediaProjectionManager =
@@ -247,6 +280,11 @@ class WechatMonitoringService : LifecycleService() {
     }
 
     private fun showTransient(message: String) {
+        if (!hasOverlayPermission()) {
+            android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -290,9 +328,16 @@ class WechatMonitoringService : LifecycleService() {
     }
 
     private fun updateOverlay(status: String? = null) {
+        status?.let { currentStatus = it }
+
+        if (!hasOverlayPermission()) {
+            removeOverlay()
+            publishState()
+            return
+        }
+
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val view = ensureOverlay(windowManager)
-        status?.let { currentStatus = it }
         overlayStatusView?.text = currentStatus
         overlayStartButton?.isEnabled = !automationEnabled.value
         overlayPauseButton?.isEnabled = automationEnabled.value
@@ -322,6 +367,23 @@ class WechatMonitoringService : LifecycleService() {
         overlayView = view
         windowManager.addView(view, params)
         return view
+    }
+
+    private fun removeOverlay() {
+        val windowManager = runCatching {
+            getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        }.getOrNull() ?: return
+        overlayView?.let { view ->
+            runCatching { windowManager.removeView(view) }
+        }
+        overlayView = null
+        overlayStatusView = null
+        overlayStartButton = null
+        overlayPauseButton = null
+    }
+
+    private fun hasOverlayPermission(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
     }
 
     private fun Image.toBitmap(): Bitmap? {
